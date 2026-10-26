@@ -36,6 +36,15 @@ class MkdocsInlineSelectSvgPlugin(mkdocs.plugins.BasePlugin[MkdocsInlineSelectSv
         page_url = urlparse(page.url)
         site_url_path = urlparse(site_url).path
 
+        # Build a lookup of in-memory SVG content from the Files collection.
+        # Other plugins (e.g. mkdocs-foam-plugin) may have set file._content
+        # to pre-processed SVG content.
+        svg_contents = {
+            f.src_uri: f._content
+            for f in files
+            if f.src_uri.endswith('.svg') and f._content is not None
+        }
+
         # Parse the HTML
         soup = BeautifulSoup(html, features='html.parser')
         # Find all img elements
@@ -70,16 +79,27 @@ class MkdocsInlineSelectSvgPlugin(mkdocs.plugins.BasePlugin[MkdocsInlineSelectSv
                 unquote_plus(x) for x in resolved_url_path.split('/')
             ]
             abs_fs_path = os.path.join(config.docs_dir, *fs_path_parts)
+
+            # Prefer in-memory content (set by other plugins via file._content),
+            # fall back to reading from disk.
+            src_uri = os.path.join(*fs_path_parts)
+            svg_content = svg_contents.get(src_uri)
+            if svg_content is None:
+                try:
+                    svg_content = open(abs_fs_path, 'r').read()
+                except:
+                    svg_content = None
+
             try:
-                svg_content = open(abs_fs_path, 'r').read()
-                svg_soup = BeautifulSoup(svg_content, 'xml')
+                svg_soup = BeautifulSoup(svg_content, 'xml') if svg_content else None
             except:
                 svg_soup = None
                 mkdocs.utils.log.error(
-                    '%s: could not read SVG content from %s',
+                    '%s: could not parse SVG content from %s',
                     self.log_prefix(),
-                    self.__abs_fs_path
+                    abs_fs_path
                 )
+
             if svg_soup is not None:
                 # strip out elements related marked with class="do-not-inline"
                 for to_remove in svg_soup.find_all('.do-not-inline'):
